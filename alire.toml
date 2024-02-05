@@ -1,0 +1,27 @@
+name = "prunt_stepgen"
+description = "Generic step generator for Prunt."
+version = "0.1.0-dev"
+
+authors = ["Liam Powell"]
+maintainers = ["Liam Powell <liam@liampll.com>"]
+maintainers-logins = ["liampwll"]
+
+[[depends-on]]
+prunt_physical_types = "*"
+prunt_motion_planner = "*"
+[[pins]]
+prunt_physical_types = { path = "../prunt_physical_types" }
+prunt_motion_planner = { path = "../prunt_motion_planner" }
+
+[build-switches]
+release.optimization = [
+  "-O3",
+  "-gnatn",
+  "-fdata-sections",
+  "-ffunction-sections",
+  "-flto=auto",
+  "-fuse-linker-plugin",
+  "-fno-pie",
+  "-fno-pic",
+  "-ffat-lto-objects"
+]
