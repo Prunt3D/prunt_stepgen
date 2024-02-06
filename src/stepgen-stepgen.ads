@@ -32,10 +32,10 @@ package Stepgen.Stepgen is
    --  procedure will work anywhere, but there is nothing keeping the step generator idle when outside of the callback.
    procedure Wait_Until_Idle;
 
-private
-
    task Preprocessor;
    task Runner;
+
+private
 
    subtype Step_Count_Offset is
      Step_Count'Base range 0 .. Step_Count'Base'Max (abs Step_Count'Last, abs Step_Count'First);
