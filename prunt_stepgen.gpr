@@ -19,7 +19,6 @@ project Prunt_Stepgen is
         Prunt_Stepgen_Config.Ada_Compiler_Switches &
         ("-gnatyM119",
          "-gnat2022",
-         "-fstack-usage",
          "-gnaty-B");
    end Compiler;
 
