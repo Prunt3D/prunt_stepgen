@@ -13,35 +13,62 @@ generic
    with function Is_Homing_Move (Data : Planner.Flush_Extra_Data_Type) return Boolean;
    with function Is_Home_Switch_Hit (Data : Planner.Flush_Extra_Data_Type) return Boolean;
 
-   type Step_Count is range <>;
    type Stepper_Name is (<>);
    type Stepper_Position is array (Stepper_Name) of Step_Count;
 
    with function Position_To_Stepper_Position (Pos : Scaled_Position) return Stepper_Position;
+   with function Stepper_Position_To_Position (Pos : Stepper_Position) return Scaled_Position;
 
-   --  Currently only suitable for double edge stepping.
    with procedure Do_Step (Stepper : Stepper_Name);
    with procedure Set_Direction (Stepper : Stepper_Name; Dir : Direction);
 
-   with procedure Finished_Block (Data : Planner.Flush_Extra_Data_Type);
+   with procedure Finished_Block (Data : Planner.Flush_Extra_Data_Type; Pos : in out Scaled_Position);
 
    Interpolation_Time : Low_Level_Time_Type;
+
+   Initial_Position : Scaled_Position;
+
+   --  When keeping track of positions, the step generator will divide and then multiply positions by this number. This
+   --  is a simple way to support steppers that do not step on both edges as otherwise some sequences could cause
+   --  unexpected results. An example is given below of a waveform that will generate back-and-forth movement when
+   --  stepping on both edges but will only move in one direction when only stepping on one edge:
+   --
+   --  Step: ___/‾‾‾\___/‾‾‾\___/‾‾‾\___/‾‾‾\___/‾‾‾
+   --  Dir:  _____/‾‾‾\___/‾‾‾\___/‾‾‾\___/‾‾‾\___/‾
+   Step_Count_Delta : Step_Count := 2;
 package Stepgen.Stepgen is
 
    --  Warning: The step generator is only guaranteed to stay idle inside of the Finished_Block callback. This
    --  procedure will work anywhere, but there is nothing keeping the step generator idle when outside of the callback.
    procedure Wait_Until_Idle;
 
+   type Stepper_Parameters is record
+      --  These limits will be enforced even if the commanded feedrate is faster, resulting in a discontinuity in
+      --  acceleration if the limits are reached. The limits are also enforced if the step generator needs to catch up
+      --  in case the step generation task is interrupted or is overloaded, so it is preferable to leave plenty of
+      --  headroom between the maximum commanded feedrate and the maximum possible feedrate derived from these limits
+      --  to avoid any issues in cases when catching up.
+      Direction_Setup_Time : Low_Level_Time_Type;
+      --  Step_Time is the minimum low or high time of each part of the step signal, not the time of the entire step.
+      Step_Time            : Low_Level_Time_Type;
+
+   end record;
+
+   type Stepper_Parameters_Array is array (Stepper_Name) of Stepper_Parameters;
+
    task Preprocessor;
-   task Runner;
+   task Runner is
+      --  No steps will be generated until this entry is called. Commands can still be enqueued and will be executed
+      --  after this entry is called.
+      entry Setup (In_Params : Stepper_Parameters_Array);
+   end Runner;
 
 private
 
-   subtype Step_Count_Offset is
-     Step_Count'Base range 0 .. Step_Count'Base'Max (abs Step_Count'Last, abs Step_Count'First);
+   subtype Natural_Step_Count is Step_Count range 0 .. Step_Count'Last;
 
    type Stepper_Position_Offset_Part is record
-      Offset : Step_Count_Offset;
+      Offset : Natural_Step_Count;
       Dir    : Direction;
    end record;
 
@@ -49,8 +76,12 @@ private
 
    function "-" (Left, Right : Stepper_Position) return Stepper_Position_Offset;
 
+   function Apply_Step_Count_Delta (Pos : Stepper_Position) return Stepper_Position;
+
+   --  TODO: Add a ramping mode for slightly smoother motion.
    type Stepper_Command is record
       Dir                : Direction;
+      N_Steps            : Natural_Step_Count;
       Time_Between_Steps : Low_Level_Time_Type;
    end record;
 
@@ -60,9 +91,5 @@ private
       Steppers        : Stepper_Commands;
       Safe_Stop_After : Boolean;
    end record;
-
-   type Command_Queue_Index is mod 2**10;
-   Command_Queue : array (Command_Queue_Index) of Full_Command with
-     Volatile_Components;
 
 end Stepgen.Stepgen;

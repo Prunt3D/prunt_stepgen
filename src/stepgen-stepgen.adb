@@ -9,6 +9,10 @@ package body Stepgen.Stepgen is
 
    PP_Execution_Block : Planner.Execution_Block;
 
+   type Command_Queue_Index is mod 2**10;
+   Command_Queue : array (Command_Queue_Index) of Full_Command with
+     Volatile_Components;
+
    Writer_Index : Command_Queue_Index := 0 with
      Volatile, Atomic;
    Reader_Index : Command_Queue_Index := 0 with
@@ -17,18 +21,21 @@ package body Stepgen.Stepgen is
    Runner_Is_Idle : Boolean := True with
      Volatile, Atomic;
 
+   function Apply_Step_Count_Delta (Pos : Stepper_Position) return Stepper_Position is
+      Res : Stepper_Position;
+   begin
+      for I in Stepper_Name loop
+         Res (I) := (Pos (I) / Step_Count_Delta) * Step_Count_Delta;
+      end loop;
+      return Res;
+   end Apply_Step_Count_Delta;
+
    task body Preprocessor is
-      Current_Time     : Time := 0.0 * s;
-      Last_Stepper_Pos : Stepper_Position;
+      Current_Time     : Time             := 0.0 * s;
+      Last_Stepper_Pos : Stepper_Position := Apply_Step_Count_Delta (Position_To_Stepper_Position (Initial_Position));
    begin
       loop
          Planner.Dequeue (PP_Execution_Block);
-
-         if PP_Execution_Block.N_Corners /= 0 then
-            Last_Stepper_Pos :=
-              Position_To_Stepper_Position
-                (Point_At_T (PP_Execution_Block.Beziers (PP_Execution_Block.Beziers'First), 0.5));
-         end if;
 
          for I in PP_Execution_Block.Feedrate_Profiles'Range loop
             declare
@@ -41,7 +48,7 @@ package body Stepgen.Stepgen is
                  (Point_At_T (PP_Execution_Block.Beziers (I), 0.0) -
                   Point_At_T (PP_Execution_Block.Beziers (I - 1), 1.0));
             begin
-               while Current_Time < Total_Time (PP_Execution_Block.Feedrate_Profiles (I)) loop
+               while Current_Time <= Total_Time (PP_Execution_Block.Feedrate_Profiles (I)) loop
                   declare
                      Distance : Length :=
                        Distance_At_Time
@@ -67,20 +74,22 @@ package body Stepgen.Stepgen is
                      end if;
 
                      declare
-                        Stepper_Pos    : constant Stepper_Position        := Position_To_Stepper_Position (Pos);
+                        Stepper_Pos    : constant Stepper_Position        :=
+                          Apply_Step_Count_Delta (Position_To_Stepper_Position (Pos));
                         Stepper_Offset : constant Stepper_Position_Offset := Stepper_Pos - Last_Stepper_Pos;
                         Command        : Full_Command;
                      begin
                         Last_Stepper_Pos := Stepper_Pos;
 
-                        Command.Safe_Stop_After := False;
+                        Command.Safe_Stop_After := I = PP_Execution_Block.Feedrate_Profiles'Last;
 
                         for J in Stepper_Name loop
                            if Stepper_Offset (J).Offset = 0 then
-                              Command.Steppers (J) := (Dir => Forward, Time_Between_Steps => Interpolation_Time * 2);
+                              Command.Steppers (J) := (Dir => Forward, N_Steps => 0, Time_Between_Steps => 0);
                            else
                               Command.Steppers (J) :=
                                 (Dir                => Stepper_Offset (J).Dir,
+                                 N_Steps            => Stepper_Offset (J).Offset,
                                  Time_Between_Steps =>
                                    Interpolation_Time / Low_Level_Time_Type (Stepper_Offset (J).Offset));
                            end if;
@@ -97,15 +106,26 @@ package body Stepgen.Stepgen is
                   end;
 
                   Current_Time := Current_Time + Low_Level_To_Time (Interpolation_Time);
+
+                  --  In theory this can cause the velocity to instantaneously double, which is bad, but in practice
+                  --  the final bit of an execution block has such low velocity that it does not matter.
+                  if Current_Time + Low_Level_To_Time (Interpolation_Time) >
+                    Total_Time (PP_Execution_Block.Feedrate_Profiles (I))
+                  then
+                     Current_Time := Total_Time (PP_Execution_Block.Feedrate_Profiles (I));
+                  end if;
                end loop;
 
                Current_Time := Current_Time - Total_Time (PP_Execution_Block.Feedrate_Profiles (I));
             end;
          end loop;
 
-         Command_Queue (Writer_Index) :=
-           (Steppers        => [others => (Dir => Forward, Time_Between_Steps => Interpolation_Time * 2)],
-            Safe_Stop_After => True);
+         declare
+            Pos : Scaled_Position := Stepper_Position_To_Position (Last_Stepper_Pos);
+         begin
+            Finished_Block (PP_Execution_Block.Flush_Extra_Data, Pos);
+            Last_Stepper_Pos := Apply_Step_Count_Delta (Position_To_Stepper_Position (Pos));
+         end;
       end loop;
    exception
       when E : others =>
@@ -117,11 +137,24 @@ package body Stepgen.Stepgen is
 
    task body Runner is
       Command             : Full_Command;
-      Next_Step           : array (Stepper_Name) of Low_Level_Time_Type;
+      Next_Actual_Step    : array (Stepper_Name) of Low_Level_Time_Type;
+      Next_Ideal_Step     : array (Stepper_Name) of Low_Level_Time_Type;
       Command_Start_Time  : Low_Level_Time_Type;
-      Empty_Queue_Is_Safe : Boolean := True;
+      Empty_Queue_Is_Safe : Boolean                                     := True;
+      Last_Direction      : array (Stepper_Name) of Direction           := [others => Forward];
+      Last_Actual_Step    : array (Stepper_Name) of Low_Level_Time_Type := [others => Get_Time];
+      Params              : Stepper_Parameters_Array;
    begin
-      --  Give queue time to fill and time for command to be prepared.
+      accept Setup (In_Params : Stepper_Parameters_Array) do
+         Params := In_Params;
+      end Setup;
+
+      for I in Stepper_Name loop
+         Set_Direction (I, Last_Direction (I));
+      end loop;
+
+      --  Give queue time to fill. This should also give plenty of time for direction setup unless someone runs this
+      --  with silly parameters.
       Command_Start_Time := Get_Time + Interpolation_Time * Low_Level_Time_Type (Command_Queue_Index'Last);
 
       loop
@@ -137,7 +170,7 @@ package body Stepgen.Stepgen is
             end loop;
 
             Runner_Is_Idle     := False;
-            --  Give queue time to fill and time for command to be prepared.
+            --  Give queue time to fill.
             Command_Start_Time := Get_Time + Interpolation_Time * Low_Level_Time_Type (Command_Queue_Index'Last);
          end if;
 
@@ -146,16 +179,30 @@ package body Stepgen.Stepgen is
 
          Empty_Queue_Is_Safe := Command.Safe_Stop_After;
 
-         for I in Stepper_Name loop
-            Next_Step (I) := Command_Start_Time + Command.Steppers (I).Time_Between_Steps / 2;
-         end loop;
-
          loop
             exit when Get_Time >= Command_Start_Time;
          end loop;
 
          for I in Stepper_Name loop
             Set_Direction (I, Command.Steppers (I).Dir);
+         end loop;
+
+         for I in Stepper_Name loop
+            Next_Ideal_Step (I)  := Command_Start_Time + Command.Steppers (I).Time_Between_Steps / 2;
+            Next_Actual_Step (I) := Next_Ideal_Step (I);
+            if Last_Direction (I) /= Command.Steppers (I).Dir then
+               Set_Direction (I, Command.Steppers (I).Dir);
+               if Last_Actual_Step (I) + Params (I).Direction_Setup_Time > Next_Actual_Step (I) then
+                  Next_Actual_Step (I) := Last_Actual_Step (I) + Params (I).Direction_Setup_Time;
+               end if;
+            end if;
+            if Last_Actual_Step (I) + Params (I).Step_Time > Next_Actual_Step (I) then
+               Next_Actual_Step (I) := Last_Actual_Step (I) + Params (I).Step_Time;
+            end if;
+
+            if Command.Steppers (I).N_Steps = 0 then
+               Next_Actual_Step (I) := Low_Level_Time_Type'Last;
+            end if;
          end loop;
 
          declare
@@ -167,12 +214,22 @@ package body Stepgen.Stepgen is
                All_Steps_Done := True;
 
                for I in Stepper_Name loop
-                  if Next_Step (I) <= T then
+                  if Next_Actual_Step (I) <= T then
                      Do_Step (I);
-                     Next_Step (I) := @ + Command.Steppers (I).Time_Between_Steps;
+                     T                    := Get_Time;
+                     Last_Actual_Step (I) := T;
+                     Next_Ideal_Step (I)  := @ + Command.Steppers (I).Time_Between_Steps;
+                     Next_Actual_Step (I) := Next_Ideal_Step (I);
+                     if Last_Actual_Step (I) + Params (I).Step_Time > Next_Actual_Step (I) then
+                        Next_Actual_Step (I) := Last_Actual_Step (I) + Params (I).Step_Time;
+                     end if;
+                     Command.Steppers (I).N_Steps := @ - 1;
                   end if;
 
-                  if Next_Step (I) < Command_Start_Time + Interpolation_Time then
+                  if Command.Steppers (I).N_Steps = 0 then
+                     --  Ensure no extra steps are produced if some steppers are running behind.
+                     Next_Actual_Step (I) := Low_Level_Time_Type'Last;
+                  else
                      All_Steps_Done := False;
                   end if;
                end loop;
