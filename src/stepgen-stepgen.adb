@@ -1,7 +1,6 @@
 with Ada.Text_IO;
 with Ada.Exceptions;
-with Motion_Planner.PH_Beziers; use Motion_Planner.PH_Beziers;
-with Motion_Planner;            use Motion_Planner;
+with Motion_Planner; use Motion_Planner;
 
 package body Stepgen.Stepgen is
 
@@ -37,95 +36,57 @@ package body Stepgen.Stepgen is
       loop
          Planner.Dequeue (PP_Execution_Block);
 
-         for I in PP_Execution_Block.Feedrate_Profiles'Range loop
-            declare
-               Start_Curve_Half_Distance : constant Length :=
-                 Distance_At_T (PP_Execution_Block.Beziers (I - 1), 1.0) -
-                 Distance_At_T (PP_Execution_Block.Beziers (I - 1), 0.5);
-               End_Curve_Half_Distance   : constant Length := Distance_At_T (PP_Execution_Block.Beziers (I), 0.5);
-               Mid_Distance              : constant Length :=
-                 abs
-                 (Point_At_T (PP_Execution_Block.Beziers (I), 0.0) -
-                  Point_At_T (PP_Execution_Block.Beziers (I - 1), 1.0));
-            begin
-               while Current_Time <= Total_Time (PP_Execution_Block.Feedrate_Profiles (I)) loop
-                  declare
-                     Distance : Length :=
-                       Distance_At_Time
-                         (PP_Execution_Block.Feedrate_Profiles (I),
-                          Current_Time,
-                          PP_Execution_Block.Segment_Limits (I).Crackle_Max,
-                          PP_Execution_Block.Corner_Velocity_Limits (I - 1));
-                     Pos      : Scaled_Position;
-                  begin
-                     if Distance < Start_Curve_Half_Distance then
-                        Pos :=
-                          Point_At_Distance (PP_Execution_Block.Beziers (I - 1), Distance + Start_Curve_Half_Distance);
-                     elsif Distance < Start_Curve_Half_Distance + Mid_Distance then
-                        Pos :=
-                          Point_At_T (PP_Execution_Block.Beziers (I - 1), 1.0) +
-                          (Point_At_T (PP_Execution_Block.Beziers (I), 0.0) -
-                             Point_At_T (PP_Execution_Block.Beziers (I - 1), 1.0)) *
-                            ((Distance - Start_Curve_Half_Distance) / Mid_Distance);
+         for I in 2 .. PP_Execution_Block.N_Corners loop
+            while Current_Time <= Planner.Segment_Time (PP_Execution_Block, I) loop
+               declare
+                  Pos : constant Position := Planner.Segment_Pos_At_Time (PP_Execution_Block, I, Current_Time);
+                  Stepper_Pos    : constant Stepper_Position        :=
+                    Apply_Step_Count_Delta (Position_To_Stepper_Position (Pos));
+                  Stepper_Offset : constant Stepper_Position_Offset := Stepper_Pos - Last_Stepper_Pos;
+                  Command        : Full_Command;
+               begin
+                  Last_Stepper_Pos := Stepper_Pos;
+
+                  Command.Safe_Stop_After :=
+                    I = PP_Execution_Block.N_Corners and Current_Time = Planner.Segment_Time (PP_Execution_Block, I);
+
+                  for J in Stepper_Name loop
+                     if Stepper_Offset (J).Offset = 0 then
+                        Command.Steppers (J) := (Dir => Forward, N_Steps => 0, Time_Between_Steps => 0);
                      else
-                        Pos :=
-                          Point_At_Distance
-                            (PP_Execution_Block.Beziers (I), Distance - Start_Curve_Half_Distance - Mid_Distance);
+                        Command.Steppers (J) :=
+                          (Dir                => Stepper_Offset (J).Dir,
+                           N_Steps            => Stepper_Offset (J).Offset,
+                           Time_Between_Steps => Interpolation_Time / Low_Level_Time_Type (Stepper_Offset (J).Offset));
                      end if;
+                  end loop;
 
-                     declare
-                        Stepper_Pos    : constant Stepper_Position        :=
-                          Apply_Step_Count_Delta (Position_To_Stepper_Position (Pos));
-                        Stepper_Offset : constant Stepper_Position_Offset := Stepper_Pos - Last_Stepper_Pos;
-                        Command        : Full_Command;
-                     begin
-                        Last_Stepper_Pos := Stepper_Pos;
+                  loop
+                     exit when Writer_Index + 1 /= Reader_Index;
+                  end loop;
 
-                        Command.Safe_Stop_After := I = PP_Execution_Block.Feedrate_Profiles'Last;
+                  Command_Queue (Writer_Index) := Command;
+               end;
 
-                        for J in Stepper_Name loop
-                           if Stepper_Offset (J).Offset = 0 then
-                              Command.Steppers (J) := (Dir => Forward, N_Steps => 0, Time_Between_Steps => 0);
-                           else
-                              Command.Steppers (J) :=
-                                (Dir                => Stepper_Offset (J).Dir,
-                                 N_Steps            => Stepper_Offset (J).Offset,
-                                 Time_Between_Steps =>
-                                   Interpolation_Time / Low_Level_Time_Type (Stepper_Offset (J).Offset));
-                           end if;
-                        end loop;
+               Writer_Index := @ + 1;
 
-                        loop
-                           exit when Writer_Index + 1 /= Reader_Index;
-                        end loop;
+               Current_Time := Current_Time + Low_Level_To_Time (Interpolation_Time);
 
-                        Command_Queue (Writer_Index) := Command;
-                     end;
+               if I = PP_Execution_Block.N_Corners and
+                 Current_Time + Low_Level_To_Time (Interpolation_Time) > Planner.Segment_Time (PP_Execution_Block, I)
+               then
+                  Current_Time := Planner.Segment_Time (PP_Execution_Block, I);
+                  --  This is fine because the final bit of an execution block has very low velocity.
+               end if;
+            end loop;
 
-                     Writer_Index := @ + 1;
-                  end;
-
-                  Current_Time := Current_Time + Low_Level_To_Time (Interpolation_Time);
-
-                  --  In theory this can cause the velocity to instantaneously double, which is bad, but in practice
-                  --  the final bit of an execution block has such low velocity that it does not matter.
-                  if Current_Time + Low_Level_To_Time (Interpolation_Time) >
-                    Total_Time (PP_Execution_Block.Feedrate_Profiles (I))
-                  then
-                     Current_Time := Total_Time (PP_Execution_Block.Feedrate_Profiles (I));
-                  end if;
-               end loop;
-
-               Current_Time := Current_Time - Total_Time (PP_Execution_Block.Feedrate_Profiles (I));
-            end;
+            Current_Time := Current_Time - Planner.Segment_Time (PP_Execution_Block, I);
          end loop;
 
-         declare
-            Pos : Scaled_Position := Stepper_Position_To_Position (Last_Stepper_Pos);
-         begin
-            Finished_Block (PP_Execution_Block.Flush_Extra_Data, Pos);
-            Last_Stepper_Pos := Apply_Step_Count_Delta (Position_To_Stepper_Position (Pos));
-         end;
+         Last_Stepper_Pos :=
+           Apply_Step_Count_Delta (Position_To_Stepper_Position (Planner.Next_Block_Pos (PP_Execution_Block)));
+
+         Finished_Block (Planner.Flush_Extra_Data (PP_Execution_Block));
       end loop;
    exception
       when E : others =>
