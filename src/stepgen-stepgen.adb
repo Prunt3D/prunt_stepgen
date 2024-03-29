@@ -30,9 +30,16 @@ package body Stepgen.Stepgen is
    end Apply_Step_Count_Delta;
 
    task body Preprocessor is
-      Current_Time     : Time             := 0.0 * s;
-      Last_Stepper_Pos : Stepper_Position := Apply_Step_Count_Delta (Position_To_Stepper_Position (Initial_Position));
+      Current_Time     : Time := 0.0 * s;
+      Last_Stepper_Pos : Stepper_Position;
+      Pos_Data         : Stepper_Pos_Data;
    begin
+      accept Setup (In_Pos_Data : Stepper_Pos_Data) do
+         Pos_Data := In_Pos_Data;
+      end Setup;
+
+      Last_Stepper_Pos := Apply_Step_Count_Delta (Position_To_Stepper_Position (Initial_Position, Pos_Data));
+
       loop
          Planner.Dequeue (PP_Execution_Block);
 
@@ -41,7 +48,7 @@ package body Stepgen.Stepgen is
                declare
                   Pos : constant Position := Planner.Segment_Pos_At_Time (PP_Execution_Block, I, Current_Time);
                   Stepper_Pos    : constant Stepper_Position        :=
-                    Apply_Step_Count_Delta (Position_To_Stepper_Position (Pos));
+                    Apply_Step_Count_Delta (Position_To_Stepper_Position (Pos, Pos_Data));
                   Stepper_Offset : constant Stepper_Position_Offset := Stepper_Pos - Last_Stepper_Pos;
                   Command        : Full_Command;
                begin
@@ -84,7 +91,8 @@ package body Stepgen.Stepgen is
          end loop;
 
          Last_Stepper_Pos :=
-           Apply_Step_Count_Delta (Position_To_Stepper_Position (Planner.Next_Block_Pos (PP_Execution_Block)));
+           Apply_Step_Count_Delta
+             (Position_To_Stepper_Position (Planner.Next_Block_Pos (PP_Execution_Block), Pos_Data));
 
          Finished_Block (Planner.Flush_Extra_Data (PP_Execution_Block));
       end loop;
@@ -111,7 +119,7 @@ package body Stepgen.Stepgen is
       end Setup;
 
       for I in Stepper_Name loop
-         Set_Direction (I, Last_Direction (I));
+         Set_Direction (I, Last_Direction (I), Params (I).User_Data);
       end loop;
 
       --  Give queue time to fill. This should also give plenty of time for direction setup unless someone runs this
@@ -145,14 +153,14 @@ package body Stepgen.Stepgen is
          end loop;
 
          for I in Stepper_Name loop
-            Set_Direction (I, Command.Steppers (I).Dir);
+            Set_Direction (I, Command.Steppers (I).Dir, Params (I).User_Data);
          end loop;
 
          for I in Stepper_Name loop
             Next_Ideal_Step (I)  := Command_Start_Time + Command.Steppers (I).Time_Between_Steps / 2;
             Next_Actual_Step (I) := Next_Ideal_Step (I);
             if Last_Direction (I) /= Command.Steppers (I).Dir then
-               Set_Direction (I, Command.Steppers (I).Dir);
+               Set_Direction (I, Command.Steppers (I).Dir, Params (I).User_Data);
                if Last_Actual_Step (I) + Params (I).Direction_Setup_Time > Next_Actual_Step (I) then
                   Next_Actual_Step (I) := Last_Actual_Step (I) + Params (I).Direction_Setup_Time;
                end if;
@@ -176,7 +184,7 @@ package body Stepgen.Stepgen is
 
                for I in Stepper_Name loop
                   if Next_Actual_Step (I) <= T then
-                     Do_Step (I);
+                     Do_Step (I, Params (I).User_Data);
                      T                    := Get_Time;
                      Last_Actual_Step (I) := T;
                      Next_Ideal_Step (I)  := @ + Command.Steppers (I).Time_Between_Steps;
