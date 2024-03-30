@@ -112,6 +112,7 @@ private
    type Full_Command is record
       Steppers        : Stepper_Commands;
       Safe_Stop_After : Boolean;
+      Loop_Until_Hit  : Boolean;
    end record;
 
 end Stepgen.Stepgen;

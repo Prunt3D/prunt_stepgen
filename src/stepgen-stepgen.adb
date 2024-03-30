@@ -23,6 +23,10 @@ package body Stepgen.Stepgen is
    type Atomic_Components_Position is new Position with
      Atomic_Components, Volatile_Components;
    PP_Last_Position : Atomic_Components_Position := Atomic_Components_Position (Initial_Position);
+
+   Homing_Move_Data : Planner.Flush_Extra_Data_Type with
+     Volatile, Atomic;
+
    function Apply_Step_Count_Delta (Pos : Stepper_Position) return Stepper_Position is
       Res : Stepper_Position;
    begin
@@ -33,9 +37,10 @@ package body Stepgen.Stepgen is
    end Apply_Step_Count_Delta;
 
    task body Preprocessor is
-      Current_Time     : Time := 0.0 * s;
-      Last_Stepper_Pos : Stepper_Position;
-      Pos_Data         : Stepper_Pos_Data;
+      Current_Time        : Time    := 0.0 * s;
+      Last_Stepper_Pos    : Stepper_Position;
+      Pos_Data            : Stepper_Pos_Data;
+      Homing_Move_Pending : Boolean := False;
    begin
       accept Setup (In_Pos_Data : Stepper_Pos_Data) do
          Pos_Data := In_Pos_Data;
@@ -46,16 +51,31 @@ package body Stepgen.Stepgen is
       loop
          Planner.Dequeue (PP_Execution_Block);
 
+         if Is_Homing_Move (Planner.Flush_Extra_Data (PP_Execution_Block)) then
+            Homing_Move_Data    := Planner.Flush_Extra_Data (PP_Execution_Block);
+            Homing_Move_Pending := True;
+         end if;
+
          for I in 2 .. PP_Execution_Block.N_Corners loop
             while Current_Time <= Planner.Segment_Time (PP_Execution_Block, I) loop
                declare
-                  Pos : constant Position := Planner.Segment_Pos_At_Time (PP_Execution_Block, I, Current_Time);
-                  Stepper_Pos    : constant Stepper_Position        :=
+                  Is_Past_Accel_Part : Boolean;
+                  Pos                : constant Position                :=
+                    Planner.Segment_Pos_At_Time (PP_Execution_Block, I, Current_Time, Is_Past_Accel_Part);
+                  Stepper_Pos        : constant Stepper_Position        :=
                     Apply_Step_Count_Delta (Position_To_Stepper_Position (Pos, Pos_Data));
-                  Stepper_Offset : constant Stepper_Position_Offset := Stepper_Pos - Last_Stepper_Pos;
-                  Command        : Full_Command;
+                  Stepper_Offset     : constant Stepper_Position_Offset := Stepper_Pos - Last_Stepper_Pos;
+                  Command            : Full_Command;
                begin
+                  if Homing_Move_Pending and Is_Past_Accel_Part then
+                     Homing_Move_Pending    := False;
+                     Command.Loop_Until_Hit := True;
+                  else
+                     Command.Loop_Until_Hit := False;
+                  end if;
+
                   PP_Last_Position := Atomic_Components_Position (Pos);
+
                   Last_Stepper_Pos := Stepper_Pos;
 
                   Command.Safe_Stop_After :=
@@ -97,6 +117,10 @@ package body Stepgen.Stepgen is
          Last_Stepper_Pos :=
            Apply_Step_Count_Delta
              (Position_To_Stepper_Position (Planner.Next_Block_Pos (PP_Execution_Block), Pos_Data));
+
+         if Is_Homing_Move (Planner.Flush_Extra_Data (PP_Execution_Block)) then
+            Wait_Until_Idle;
+         end if;
 
          Finished_Block (Planner.Flush_Extra_Data (PP_Execution_Block));
       end loop;
@@ -147,8 +171,12 @@ package body Stepgen.Stepgen is
             Command_Start_Time := Get_Time + Interpolation_Time * Low_Level_Time_Type (Command_Queue_Index'Last);
          end if;
 
-         Command      := Command_Queue (Reader_Index);
-         Reader_Index := @ + 1;
+         Command := Command_Queue (Reader_Index);
+
+         if (not Command.Loop_Until_Hit) or else Is_Home_Switch_Hit (Homing_Move_Data) then
+            --  TODO: Check that the switch is not hit before starting the looping part of a homing move.
+            Reader_Index := @ + 1;
+         end if;
 
          Empty_Queue_Is_Safe := Command.Safe_Stop_After;
 
@@ -246,4 +274,5 @@ package body Stepgen.Stepgen is
    begin
       return Position (PP_Last_Position);
    end Last_Position;
+
 end Stepgen.Stepgen;
