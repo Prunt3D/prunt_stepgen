@@ -20,6 +20,9 @@ package body Stepgen.Stepgen is
    Runner_Is_Idle : Boolean := True with
      Volatile, Atomic;
 
+   type Atomic_Components_Position is new Position with
+     Atomic_Components, Volatile_Components;
+   PP_Last_Position : Atomic_Components_Position := Atomic_Components_Position (Initial_Position);
    function Apply_Step_Count_Delta (Pos : Stepper_Position) return Stepper_Position is
       Res : Stepper_Position;
    begin
@@ -52,6 +55,7 @@ package body Stepgen.Stepgen is
                   Stepper_Offset : constant Stepper_Position_Offset := Stepper_Pos - Last_Stepper_Pos;
                   Command        : Full_Command;
                begin
+                  PP_Last_Position := Atomic_Components_Position (Pos);
                   Last_Stepper_Pos := Stepper_Pos;
 
                   Command.Safe_Stop_After :=
@@ -238,4 +242,8 @@ package body Stepgen.Stepgen is
       end return;
    end "-";
 
+   function Last_Position return Position is
+   begin
+      return Position (PP_Last_Position);
+   end Last_Position;
 end Stepgen.Stepgen;

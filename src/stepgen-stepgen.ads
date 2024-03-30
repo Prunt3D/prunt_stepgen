@@ -84,6 +84,8 @@ package Stepgen.Stepgen is
       --  after this entry is called.
    end Runner;
 
+   function Last_Position return Position;
+
 private
 
    subtype Natural_Step_Count is Step_Count range 0 .. Step_Count'Last;
