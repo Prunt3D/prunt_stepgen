@@ -52,6 +52,9 @@ package body Stepgen.Stepgen is
          Planner.Dequeue (PP_Execution_Block);
 
          if Is_Homing_Move (Planner.Flush_Extra_Data (PP_Execution_Block)) then
+            if PP_Execution_Block.N_Corners /= 2 then
+               raise Constraint_Error with "Homing move must have exactly 2 corners.";
+            end if;
             Homing_Move_Data    := Planner.Flush_Extra_Data (PP_Execution_Block);
             Homing_Move_Pending := True;
          end if;
