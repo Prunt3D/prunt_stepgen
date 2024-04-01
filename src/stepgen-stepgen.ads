@@ -27,7 +27,7 @@ generic
    with procedure Do_Step (Stepper : Stepper_Name; Data : in out Stepper_Output_Data);
    with procedure Set_Direction (Stepper : Stepper_Name; Dir : Direction; Data : in out Stepper_Output_Data);
 
-   with procedure Finished_Block (Data : Planner.Flush_Extra_Data_Type);
+   with procedure Finished_Block (Data : Planner.Flush_Extra_Data_Type; First_Segment_Accel_Distance : Length);
 
    Interpolation_Time : Low_Level_Time_Type;
 
@@ -65,8 +65,6 @@ package Stepgen.Stepgen is
    end record;
 
    type Stepper_Parameters_Array is array (Stepper_Name) of Stepper_Parameters;
-
-   type Prepare_Data_In_Task is access procedure;
 
    task Preprocessor with
      CPU => Preprocessor_CPU

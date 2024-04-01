@@ -125,7 +125,16 @@ package body Stepgen.Stepgen is
             Wait_Until_Idle;
          end if;
 
-         Finished_Block (Planner.Flush_Extra_Data (PP_Execution_Block));
+         declare
+            First_Accel_Distance : Length;
+         begin
+            if PP_Execution_Block.N_Corners < 2 then
+               First_Accel_Distance := 0.0 * mm;
+            else
+               First_Accel_Distance := Planner.Segment_Accel_Distance (PP_Execution_Block, 2);
+            end if;
+            Finished_Block (Planner.Flush_Extra_Data (PP_Execution_Block), First_Accel_Distance);
+         end;
       end loop;
    exception
       when E : others =>
