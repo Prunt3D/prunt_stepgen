@@ -20,6 +20,9 @@ package body Stepgen.Stepgen is
    Runner_Is_Idle : Boolean := True with
      Volatile, Atomic;
 
+   Hit_During_Accel : Boolean := False with
+     Volatile, Atomic;
+
    type Atomic_Components_Position is new Position with
      Atomic_Components, Volatile_Components;
    PP_Last_Position : Atomic_Components_Position := Atomic_Components_Position (Initial_Position);
@@ -135,7 +138,7 @@ package body Stepgen.Stepgen is
             else
                First_Accel_Distance := Planner.Segment_Accel_Distance (PP_Execution_Block, 2);
             end if;
-            Finished_Block (Planner.Flush_Extra_Data (PP_Execution_Block), First_Accel_Distance);
+            Finished_Block (Planner.Flush_Extra_Data (PP_Execution_Block), First_Accel_Distance, Hit_During_Accel);
          end;
       end loop;
    exception
@@ -155,6 +158,7 @@ package body Stepgen.Stepgen is
       Last_Direction      : array (Stepper_Name) of Direction           := [others => Forward];
       Last_Actual_Step    : array (Stepper_Name) of Low_Level_Time_Type := [others => Get_Time];
       Params              : Stepper_Parameters_Array;
+      First_Command_Loop  : Boolean                                     := True;
    begin
       accept Setup (In_Params : Stepper_Parameters_Array) do
          Params := In_Params;
@@ -187,9 +191,15 @@ package body Stepgen.Stepgen is
 
          Command := Command_Queue (Reader_Index);
 
-         if (not Command.Loop_Until_Hit) or else Is_Home_Switch_Hit (Homing_Move_Data) then
-            --  TODO: Check that the switch is not hit before starting the looping part of a homing move.
+         if Command.Loop_Until_Hit then
+            if Is_Home_Switch_Hit (Homing_Move_Data) then
+               Hit_During_Accel := First_Command_Loop;
+               Reader_Index := @ + 1;
+            end if;
+            First_Command_Loop := False;
+         else
             Reader_Index := @ + 1;
+            First_Command_Loop := True;
          end if;
 
          Empty_Queue_Is_Safe := Command.Safe_Stop_After;
