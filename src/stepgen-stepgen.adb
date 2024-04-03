@@ -78,6 +78,8 @@ package body Stepgen.Stepgen is
                   --  homing move is extremely slow.
                   --  TODO: Add some sort of check that makes sure the move is fast enough to not go too far off path.
                   --        Alternatively, make looping moves have much longer interpolation time.
+                  --        Alternatively, take a set of homing vectors as parameters and ensure homing is always along
+                  --        those vectors.
                   if Homing_Move_Pending and Is_Past_Accel_Part then
                      Homing_Move_Pending    := False;
                      Command.Loop_Until_Hit := True;
