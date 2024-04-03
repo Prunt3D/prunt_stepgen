@@ -59,7 +59,6 @@ package body Stepgen.Stepgen is
                raise Constraint_Error with "Homing move must have exactly 2 corners.";
             end if;
             Wait_Until_Idle;
-            delay 1.0;
             Homing_Move_Data    := Planner.Flush_Extra_Data (PP_Execution_Block);
             Homing_Move_Pending := True;
          end if;
