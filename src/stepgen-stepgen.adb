@@ -65,7 +65,7 @@ package body Stepgen.Stepgen is
          end if;
 
          for I in 2 .. PP_Execution_Block.N_Corners loop
-            while Current_Time <= Planner.Segment_Time (PP_Execution_Block, I) loop
+            loop
                declare
                   Is_Past_Accel_Part : Boolean;
                   Pos                : constant Position                :=
@@ -108,6 +108,8 @@ package body Stepgen.Stepgen is
                end;
 
                Writer_Index := @ + 1;
+
+               exit when Current_Time >= Planner.Segment_Time (PP_Execution_Block, I);
 
                Current_Time := Current_Time + Low_Level_To_Time (Interpolation_Time);
 
