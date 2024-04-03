@@ -75,6 +75,10 @@ package body Stepgen.Stepgen is
                   Stepper_Offset     : constant Stepper_Position_Offset := Stepper_Pos - Last_Stepper_Pos;
                   Command            : Full_Command;
                begin
+                  --  This looping will technically not follow the path perfectly, but it will be good enough unless a
+                  --  homing move is extremely slow.
+                  --  TODO: Add some sort of check that makes sure the move is fast enough to not go too far off path.
+                  --        Alternatively, make looping moves have much longer interpolation time.
                   if Homing_Move_Pending and Is_Past_Accel_Part then
                      Homing_Move_Pending    := False;
                      Command.Loop_Until_Hit := True;
@@ -156,11 +160,11 @@ package body Stepgen.Stepgen is
       Next_Actual_Step    : array (Stepper_Name) of Low_Level_Time_Type;
       Next_Ideal_Step     : array (Stepper_Name) of Low_Level_Time_Type;
       Command_Start_Time  : Low_Level_Time_Type;
-      Empty_Queue_Is_Safe : Boolean                                     := True;
-      Last_Direction      : array (Stepper_Name) of Direction           := [others => Forward];
-      Last_Actual_Step    : array (Stepper_Name) of Low_Level_Time_Type := [others => Get_Time];
+      Empty_Queue_Is_Safe : Boolean                           := True;
+      Last_Direction      : array (Stepper_Name) of Direction := [others => Forward];
+      Last_Actual_Step    : array (Stepper_Name) of Low_Level_Time_Type;
       Params              : Stepper_Parameters_Array;
-      First_Command_Loop  : Boolean                                     := True;
+      First_Command_Loop  : Boolean                           := True;
    begin
       accept Setup (In_Params : Stepper_Parameters_Array) do
          Params := In_Params;
@@ -168,6 +172,7 @@ package body Stepgen.Stepgen is
 
       for I in Stepper_Name loop
          Set_Direction (I, Last_Direction (I), Params (I).User_Data);
+         Last_Actual_Step (I) := Get_Time;
       end loop;
 
       --  Give queue time to fill. This should also give plenty of time for direction setup unless someone runs this
@@ -196,11 +201,11 @@ package body Stepgen.Stepgen is
          if Command.Loop_Until_Hit then
             if Is_Home_Switch_Hit (Homing_Move_Data) then
                Hit_During_Accel := First_Command_Loop;
-               Reader_Index := @ + 1;
+               Reader_Index     := @ + 1;
             end if;
             First_Command_Loop := False;
          else
-            Reader_Index := @ + 1;
+            Reader_Index       := @ + 1;
             First_Command_Loop := True;
          end if;
 
