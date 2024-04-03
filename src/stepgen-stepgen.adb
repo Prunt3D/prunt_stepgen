@@ -133,6 +133,8 @@ package body Stepgen.Stepgen is
            Apply_Step_Count_Delta
              (Position_To_Stepper_Position (Planner.Next_Block_Pos (PP_Execution_Block), Pos_Data));
 
+         PP_Last_Position := Atomic_Components_Position (Planner.Next_Block_Pos (PP_Execution_Block));
+
          if Is_Homing_Move (Planner.Flush_Extra_Data (PP_Execution_Block)) then
             Wait_Until_Idle;
          end if;
