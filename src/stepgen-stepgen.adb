@@ -96,12 +96,9 @@ package body Stepgen.Stepgen is
 
                   for J in Stepper_Name loop
                      if Stepper_Offset (J).Offset = 0 then
-                        Command.Steppers (J) := (Dir => Forward, N_Steps => 0, Time_Between_Steps => 0);
+                        Command.Steppers (J) := (Dir => Forward, N_Steps => 0);
                      else
-                        Command.Steppers (J) :=
-                          (Dir                => Stepper_Offset (J).Dir,
-                           N_Steps            => Stepper_Offset (J).Offset,
-                           Time_Between_Steps => Interpolation_Time / Low_Level_Time_Type (Stepper_Offset (J).Offset));
+                        Command.Steppers (J) := (Dir => Stepper_Offset (J).Dir, N_Steps => Stepper_Offset (J).Offset);
                      end if;
                   end loop;
 
@@ -223,7 +220,12 @@ package body Stepgen.Stepgen is
          end loop;
 
          for I in Stepper_Name loop
-            Next_Ideal_Step (I)  := Command_Start_Time + Command.Steppers (I).Time_Between_Steps / 2;
+            if Command.Steppers (I).N_Steps = 0 then
+               Next_Ideal_Step (I) := Low_Level_Time_Type'Last;
+            else
+               Next_Ideal_Step (I) :=
+                 Command_Start_Time + Interpolation_Time / Low_Level_Time_Type (2 * Command.Steppers (I).N_Steps);
+            end if;
             Next_Actual_Step (I) := Next_Ideal_Step (I);
             if Last_Direction (I) /= Command.Steppers (I).Dir then
                Set_Direction (I, Command.Steppers (I).Dir, Params (I).User_Data);
@@ -243,6 +245,7 @@ package body Stepgen.Stepgen is
          declare
             T              : Low_Level_Time_Type;
             All_Steps_Done : Boolean;
+            N_Steps_Done   : array (Stepper_Name) of Natural_Step_Count := [others => 0];
          begin
             loop
                T              := Get_Time;
@@ -253,15 +256,24 @@ package body Stepgen.Stepgen is
                      Do_Step (I, Params (I).User_Data);
                      T                    := Get_Time;
                      Last_Actual_Step (I) := T;
-                     Next_Ideal_Step (I)  := @ + Command.Steppers (I).Time_Between_Steps;
+                     N_Steps_Done (I)     := @ + 1;
+                     Next_Ideal_Step (I)  :=
+                       Command_Start_Time +
+                       Interpolation_Time * Low_Level_Time_Type (2 * N_Steps_Done (I) + 1) /
+                         Low_Level_Time_Type (2 * Command.Steppers (I).N_Steps);
+                     --  Do not rearrange the above equation without carefully considering how it is computed with
+                     --  integer arithmetic.
+                     --
+                     --  TODO: This assumes that Low_Level_Time_Type can be multipled by 2 * N_Steps without
+                     --  overflowing. Document that Low_Level_Time_Type should be a fair bit larger than the
+                     --  maximum possible value from Get_Time.
                      Next_Actual_Step (I) := Next_Ideal_Step (I);
                      if Last_Actual_Step (I) + Params (I).Step_Time > Next_Actual_Step (I) then
                         Next_Actual_Step (I) := Last_Actual_Step (I) + Params (I).Step_Time;
                      end if;
-                     Command.Steppers (I).N_Steps := @ - 1;
                   end if;
 
-                  if Command.Steppers (I).N_Steps = 0 then
+                  if N_Steps_Done (I) = Command.Steppers (I).N_Steps then
                      --  Ensure no extra steps are produced if some steppers are running behind.
                      Next_Actual_Step (I) := Low_Level_Time_Type'Last;
                   else

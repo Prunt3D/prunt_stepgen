@@ -101,9 +101,8 @@ private
    function Apply_Step_Count_Delta (Pos : Stepper_Position) return Stepper_Position;
 
    type Stepper_Command is record
-      Dir                : Direction;
-      N_Steps            : Natural_Step_Count;
-      Time_Between_Steps : Low_Level_Time_Type;
+      Dir     : Direction;
+      N_Steps : Natural_Step_Count;
    end record;
 
    type Stepper_Commands is array (Stepper_Name) of Stepper_Command;
