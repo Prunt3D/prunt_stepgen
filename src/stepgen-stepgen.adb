@@ -115,9 +115,7 @@ package body Stepgen.Stepgen is
 
                Current_Time := Current_Time + Low_Level_To_Time (Interpolation_Time);
 
-               if I = PP_Execution_Block.N_Corners and
-                 Current_Time + Low_Level_To_Time (Interpolation_Time) > Planner.Segment_Time (PP_Execution_Block, I)
-               then
+               if I = PP_Execution_Block.N_Corners and Current_Time > Planner.Segment_Time (PP_Execution_Block, I) then
                   Current_Time := Planner.Segment_Time (PP_Execution_Block, I);
                   --  This is fine because the final bit of an execution block has very low velocity.
                end if;
