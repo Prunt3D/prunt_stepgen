@@ -32,6 +32,8 @@ generic
 
    Interpolation_Time : Low_Level_Time_Type;
 
+   Loop_Interpolation_Time : Low_Level_Time_Type;
+
    Initial_Position : Position;
 
    Preprocessor_CPU : System.Multiprocessors.CPU_Range;

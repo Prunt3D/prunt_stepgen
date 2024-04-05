@@ -40,10 +40,12 @@ package body Stepgen.Stepgen is
    end Apply_Step_Count_Delta;
 
    task body Preprocessor is
-      Current_Time        : Time    := 0.0 * s;
-      Last_Stepper_Pos    : Stepper_Position;
-      Pos_Data            : Stepper_Pos_Data;
-      Homing_Move_Pending : Boolean := False;
+      Current_Time     : Time := 0.0 * s;
+      Last_Stepper_Pos : Stepper_Position;
+      Pos_Data         : Stepper_Pos_Data;
+
+      type Homing_Move_When_Kind is (Not_Pending_Kind, This_Block_Kind, This_Move_Kind);
+      Homing_Move_When : Homing_Move_When_Kind := Not_Pending_Kind;
    begin
       accept Setup (In_Pos_Data : Stepper_Pos_Data) do
          Pos_Data := In_Pos_Data;
@@ -59,8 +61,8 @@ package body Stepgen.Stepgen is
                raise Constraint_Error with "Homing move must have exactly 2 corners.";
             end if;
             Wait_Until_Idle;
-            Homing_Move_Data    := Planner.Flush_Extra_Data (PP_Execution_Block);
-            Homing_Move_Pending := True;
+            Homing_Move_Data := Planner.Flush_Extra_Data (PP_Execution_Block);
+            Homing_Move_When := This_Block_Kind;
          end if;
 
          for I in 2 .. PP_Execution_Block.N_Corners loop
@@ -74,18 +76,18 @@ package body Stepgen.Stepgen is
                   Stepper_Offset     : constant Stepper_Position_Offset := Stepper_Pos - Last_Stepper_Pos;
                   Command            : Full_Command;
                begin
-                  --  This looping will technically not follow the path perfectly, but it will be good enough unless a
-                  --  homing move is extremely slow.
-                  --  TODO: Add some sort of check that makes sure the move is fast enough to not go too far off path.
-                  --        Alternatively, make looping moves have much longer interpolation time.
-                  --        Alternatively, take a set of homing vectors as parameters and ensure homing is always along
-                  --        those vectors.
-                  if Homing_Move_Pending and Is_Past_Accel_Part then
-                     Homing_Move_Pending    := False;
-                     Command.Loop_Until_Hit := True;
-                  else
-                     Command.Loop_Until_Hit := False;
-                  end if;
+                  case Homing_Move_When is
+                     when This_Block_Kind =>
+                        if Is_Past_Accel_Part then
+                           Homing_Move_When := This_Move_Kind; --  Next loop iteration, not this one.
+                        end if;
+                        Command.Loop_Until_Hit := False;
+                     when Not_Pending_Kind =>
+                        Command.Loop_Until_Hit := False;
+                     when This_Move_Kind =>
+                        Command.Loop_Until_Hit := True;
+                        Homing_Move_When       := Not_Pending_Kind;
+                  end case;
 
                   PP_Last_Position := Atomic_Components_Position (Pos);
 
@@ -111,9 +113,18 @@ package body Stepgen.Stepgen is
 
                Writer_Index := @ + 1;
 
+               if Homing_Move_When /= Not_Pending_Kind and Current_Time >= Planner.Segment_Time (PP_Execution_Block, I)
+               then
+                  raise Constraint_Error with "Homing move queued but end of block reached before execution.";
+               end if;
+
                exit when Current_Time >= Planner.Segment_Time (PP_Execution_Block, I);
 
-               Current_Time := Current_Time + Low_Level_To_Time (Interpolation_Time);
+               if Homing_Move_When = This_Move_Kind then
+                  Current_Time := Current_Time + Low_Level_To_Time (Loop_Interpolation_Time);
+               else
+                  Current_Time := Current_Time + Low_Level_To_Time (Interpolation_Time);
+               end if;
 
                if I = PP_Execution_Block.N_Corners and Current_Time > Planner.Segment_Time (PP_Execution_Block, I) then
                   Current_Time := Planner.Segment_Time (PP_Execution_Block, I);
@@ -154,15 +165,16 @@ package body Stepgen.Stepgen is
    Empty_Queue : exception;
 
    task body Runner is
-      Command             : Full_Command;
-      Next_Actual_Step    : array (Stepper_Name) of Low_Level_Time_Type;
-      Next_Ideal_Step     : array (Stepper_Name) of Low_Level_Time_Type;
-      Command_Start_Time  : Low_Level_Time_Type;
-      Empty_Queue_Is_Safe : Boolean                           := True;
-      Last_Direction      : array (Stepper_Name) of Direction := [others => Forward];
-      Last_Actual_Step    : array (Stepper_Name) of Low_Level_Time_Type;
-      Params              : Stepper_Parameters_Array;
-      First_Command_Loop  : Boolean                           := True;
+      Command                    : Full_Command;
+      Next_Actual_Step           : array (Stepper_Name) of Low_Level_Time_Type;
+      Next_Ideal_Step            : array (Stepper_Name) of Low_Level_Time_Type;
+      Command_Start_Time         : Low_Level_Time_Type;
+      Empty_Queue_Is_Safe        : Boolean                           := True;
+      Last_Direction             : array (Stepper_Name) of Direction := [others => Forward];
+      Last_Actual_Step           : array (Stepper_Name) of Low_Level_Time_Type;
+      Params                     : Stepper_Parameters_Array;
+      First_Command_Loop         : Boolean                           := True;
+      Command_Interpolation_Time : Low_Level_Time_Type;
    begin
       accept Setup (In_Params : Stepper_Parameters_Array) do
          Params := In_Params;
@@ -197,14 +209,16 @@ package body Stepgen.Stepgen is
          Command := Command_Queue (Reader_Index);
 
          if Command.Loop_Until_Hit then
+            Command_Interpolation_Time := Loop_Interpolation_Time;
             if Is_Home_Switch_Hit (Homing_Move_Data) then
                Hit_During_Accel := First_Command_Loop;
                Reader_Index     := @ + 1;
             end if;
             First_Command_Loop := False;
          else
-            Reader_Index       := @ + 1;
-            First_Command_Loop := True;
+            Command_Interpolation_Time := Interpolation_Time;
+            Reader_Index               := @ + 1;
+            First_Command_Loop         := True;
          end if;
 
          Empty_Queue_Is_Safe := Command.Safe_Stop_After;
@@ -222,7 +236,8 @@ package body Stepgen.Stepgen is
                Next_Ideal_Step (I) := Low_Level_Time_Type'Last;
             else
                Next_Ideal_Step (I) :=
-                 Command_Start_Time + Interpolation_Time / Low_Level_Time_Type (2 * Command.Steppers (I).N_Steps);
+                 Command_Start_Time +
+                 Command_Interpolation_Time / Low_Level_Time_Type (2 * Command.Steppers (I).N_Steps);
             end if;
             Next_Actual_Step (I) := Next_Ideal_Step (I);
             if Last_Direction (I) /= Command.Steppers (I).Dir then
@@ -257,7 +272,7 @@ package body Stepgen.Stepgen is
                      N_Steps_Done (I)     := @ + 1;
                      Next_Ideal_Step (I)  :=
                        Command_Start_Time +
-                       Interpolation_Time * Low_Level_Time_Type (2 * N_Steps_Done (I) + 1) /
+                       Command_Interpolation_Time * Low_Level_Time_Type (2 * N_Steps_Done (I) + 1) /
                          Low_Level_Time_Type (2 * Command.Steppers (I).N_Steps);
                      --  Do not rearrange the above equation without carefully considering how it is computed with
                      --  integer arithmetic.
@@ -283,7 +298,7 @@ package body Stepgen.Stepgen is
             end loop;
          end;
 
-         Command_Start_Time := @ + Interpolation_Time;
+         Command_Start_Time := @ + Command_Interpolation_Time;
       end loop;
    exception
       when E : others =>
