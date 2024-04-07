@@ -223,10 +223,6 @@ package body Stepgen.Stepgen is
 
          Empty_Queue_Is_Safe := Command.Safe_Stop_After;
 
-         loop
-            exit when Get_Time >= Command_Start_Time;
-         end loop;
-
          for I in Stepper_Name loop
             Set_Direction (I, Command.Steppers (I).Dir, Params (I).User_Data);
          end loop;
