@@ -193,7 +193,7 @@ package body Stepgen.Stepgen is
          if Reader_Index = Writer_Index then
             Runner_Is_Idle := True;
 
-            if not Empty_Queue_Is_Safe then
+            if (not Empty_Queue_Is_Safe) and (not Ignore_Empty_Queue) then
                raise Empty_Queue with "Stepgen queue is empty in middle of move.";
             end if;
 
@@ -201,9 +201,12 @@ package body Stepgen.Stepgen is
                exit when Reader_Index /= Writer_Index;
             end loop;
 
-            Runner_Is_Idle     := False;
-            --  Give queue time to fill.
-            Command_Start_Time := Get_Time + Interpolation_Time * Low_Level_Time_Type (Command_Queue_Index'Last);
+            Runner_Is_Idle := False;
+
+            if not Ignore_Empty_Queue then
+               --  Give queue time to fill.
+               Command_Start_Time := Get_Time + Interpolation_Time * Low_Level_Time_Type (Command_Queue_Index'Last);
+            end if;
          end if;
 
          Command := Command_Queue (Reader_Index);
@@ -259,6 +262,18 @@ package body Stepgen.Stepgen is
             loop
                T              := Get_Time;
                All_Steps_Done := True;
+
+               declare
+                  Next_Time : Low_Level_Time_Type := Low_Level_Time_Type'Last;
+               begin
+                  for I in Stepper_Name loop
+                     Next_Time := Low_Level_Time_Type'Min (Next_Time, Next_Actual_Step (I));
+                  end loop;
+
+                  if Next_Time /= Low_Level_Time_Type'Last then
+                     Waiting_For_Time (Next_Time);
+                  end if;
+               end;
 
                for I in Stepper_Name loop
                   if Next_Actual_Step (I) <= T then

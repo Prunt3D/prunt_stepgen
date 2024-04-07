@@ -47,6 +47,14 @@ generic
    --
    --  Step: ___/‾‾‾\___/‾‾‾\___/‾‾‾\___/‾‾‾\___/‾‾‾
    --  Dir:  _____/‾‾‾\___/‾‾‾\___/‾‾‾\___/‾‾‾\___/‾
+
+   with procedure Waiting_For_Time (T : Low_Level_Time_Type) is null;
+   --  When the step generator is waiting in a loop for a specific time, this procedure will be called. This procedure
+   --  is only intended for use with simulation. Do not use this procedure to do other things in the stepgen task.
+
+   Ignore_Empty_Queue : Boolean := False;
+   --  If set to True, the step generator will not raise an exception when the queue is empty and will not wait for
+   --  the queue to be filled before beginning execution. This is only meant for use in simulation.
 package Stepgen.Stepgen is
 
    --  Warning: The step generator is only guaranteed to stay idle inside of the Finished_Block callback. This
