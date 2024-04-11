@@ -214,11 +214,11 @@ package body Stepgen.Stepgen is
          if Reader_Index = Writer_Index then
             Runner_Is_Idle := True;
 
-            if (not Empty_Queue_Is_Safe) and (not Ignore_Empty_Queue) then
-               raise Empty_Queue with "Stepgen queue is empty in middle of move.";
-            end if;
-
             loop
+               if (not Empty_Queue_Is_Safe) and (not Ignore_Empty_Queue) and Get_Time > Command_Start_Time then
+                  raise Empty_Queue with "Stepgen queue is empty in middle of move.";
+               end if;
+
                exit when Reader_Index /= Writer_Index;
             end loop;
 
