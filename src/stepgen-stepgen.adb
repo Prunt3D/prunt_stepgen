@@ -139,17 +139,19 @@ package body Stepgen.Stepgen is
                   raise Constraint_Error with "Homing move queued but end of block reached before execution.";
                end if;
 
-               exit when Current_Time >= Planner.Segment_Time (PP_Execution_Block, I);
-
-               if Homing_Move_When = This_Move_Kind then
-                  Current_Time := Current_Time + Low_Level_To_Time (Loop_Interpolation_Time);
-               else
-                  Current_Time := Current_Time + Low_Level_To_Time (Interpolation_Time);
+               if Current_Time /= Planner.Segment_Time (PP_Execution_Block, I) then
+                  if Homing_Move_When = This_Move_Kind then
+                     Current_Time := Current_Time + Low_Level_To_Time (Loop_Interpolation_Time);
+                  else
+                     Current_Time := Current_Time + Low_Level_To_Time (Interpolation_Time);
+                  end if;
                end if;
 
                if I = PP_Execution_Block.N_Corners and Current_Time > Planner.Segment_Time (PP_Execution_Block, I) then
                   Current_Time := Planner.Segment_Time (PP_Execution_Block, I);
                   --  This is fine because the final bit of an execution block has very low velocity.
+               else
+                  exit when Current_Time >= Planner.Segment_Time (PP_Execution_Block, I);
                end if;
             end loop;
 
