@@ -277,57 +277,51 @@ package body Stepgen.Stepgen is
          end loop;
 
          declare
-            T              : Low_Level_Time_Type;
-            All_Steps_Done : Boolean;
-            N_Steps_Done   : array (Stepper_Name) of Natural_Step_Count := [others => 0];
+            N_Steps_Done : array (Stepper_Name) of Natural_Step_Count := [others => 0];
          begin
             loop
-               T              := Get_Time;
-               All_Steps_Done := True;
-
                declare
-                  Next_Time : Low_Level_Time_Type := Low_Level_Time_Type'Last;
+                  Next_Stepper : Stepper_Name := Stepper_Name'First;
                begin
                   for I in Stepper_Name loop
-                     Next_Time := Low_Level_Time_Type'Min (Next_Time, Next_Actual_Step (I));
+                     if Next_Ideal_Step (I) < Next_Ideal_Step (Next_Stepper) then
+                        Next_Stepper := I;
+                     end if;
                   end loop;
 
-                  if Next_Time /= Low_Level_Time_Type'Last then
-                     Waiting_For_Time (Next_Time);
+                  exit when Next_Ideal_Step (Next_Stepper) = Low_Level_Time_Type'Last;
+
+                  loop
+                     Waiting_For_Time (Next_Actual_Step (Next_Stepper));
+                     exit when Get_Time >= Next_Actual_Step (Next_Stepper);
+                  end loop;
+                  Do_Step (Next_Stepper, Params (Next_Stepper).User_Data);
+                  Last_Actual_Step (Next_Stepper) := Get_Time;
+                  N_Steps_Done (Next_Stepper)     := @ + 1;
+                  Next_Ideal_Step (Next_Stepper)  :=
+                    Command_Start_Time +
+                    Command_Interpolation_Time * Low_Level_Time_Type (2 * N_Steps_Done (Next_Stepper) + 1) /
+                      Low_Level_Time_Type (2 * Command.Steppers (Next_Stepper).N_Steps);
+                  --  Do not rearrange the above equation without carefully considering how it is computed with
+                  --  integer arithmetic.
+                  --
+                  --  TODO: This assumes that Low_Level_Time_Type can be multiplied by 2 * N_Steps without
+                  --  overflowing. Document that Low_Level_Time_Type should be a fair bit larger than the
+                  --  maximum possible value from Get_Time.
+                  Next_Actual_Step (Next_Stepper) := Next_Ideal_Step (Next_Stepper);
+                  if Last_Actual_Step (Next_Stepper) + Params (Next_Stepper).Step_Time >
+                    Next_Actual_Step (Next_Stepper)
+                  then
+                     Next_Actual_Step (Next_Stepper) :=
+                       Last_Actual_Step (Next_Stepper) + Params (Next_Stepper).Step_Time;
+                  end if;
+
+                  if N_Steps_Done (Next_Stepper) = Command.Steppers (Next_Stepper).N_Steps then
+                     --  Ensure no extra steps are produced if some steppers are running behind.
+                     Next_Ideal_Step (Next_Stepper)  := Low_Level_Time_Type'Last;
+                     Next_Actual_Step (Next_Stepper) := Low_Level_Time_Type'Last;
                   end if;
                end;
-
-               for I in Stepper_Name loop
-                  if Next_Actual_Step (I) <= T then
-                     Do_Step (I, Params (I).User_Data);
-                     T                    := Get_Time;
-                     Last_Actual_Step (I) := T;
-                     N_Steps_Done (I)     := @ + 1;
-                     Next_Ideal_Step (I)  :=
-                       Command_Start_Time +
-                       Command_Interpolation_Time * Low_Level_Time_Type (2 * N_Steps_Done (I) + 1) /
-                         Low_Level_Time_Type (2 * Command.Steppers (I).N_Steps);
-                     --  Do not rearrange the above equation without carefully considering how it is computed with
-                     --  integer arithmetic.
-                     --
-                     --  TODO: This assumes that Low_Level_Time_Type can be multipled by 2 * N_Steps without
-                     --  overflowing. Document that Low_Level_Time_Type should be a fair bit larger than the
-                     --  maximum possible value from Get_Time.
-                     Next_Actual_Step (I) := Next_Ideal_Step (I);
-                     if Last_Actual_Step (I) + Params (I).Step_Time > Next_Actual_Step (I) then
-                        Next_Actual_Step (I) := Last_Actual_Step (I) + Params (I).Step_Time;
-                     end if;
-                  end if;
-
-                  if N_Steps_Done (I) = Command.Steppers (I).N_Steps then
-                     --  Ensure no extra steps are produced if some steppers are running behind.
-                     Next_Actual_Step (I) := Low_Level_Time_Type'Last;
-                  else
-                     All_Steps_Done := False;
-                  end if;
-               end loop;
-
-               exit when All_Steps_Done;
             end loop;
          end;
 
