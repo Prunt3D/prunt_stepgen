@@ -215,7 +215,8 @@ package body Stepgen.Stepgen is
             Runner_Is_Idle := True;
 
             loop
-               if (not Empty_Queue_Is_Safe) and (not Ignore_Empty_Queue) and Get_Time > Command_Start_Time then
+               if (not Ignore_Empty_Queue) and then (not Empty_Queue_Is_Safe) and then Get_Time > Command_Start_Time
+               then
                   raise Empty_Queue with "Stepgen queue is empty in middle of move.";
                end if;
 
