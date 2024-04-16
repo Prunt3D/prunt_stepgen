@@ -20,7 +20,6 @@
 -----------------------------------------------------------------------------
 
 with Ada.Text_IO;
-with Ada.Exceptions;
 with Motion_Planner; use Motion_Planner;
 
 package body Stepgen.Stepgen is
@@ -179,10 +178,6 @@ package body Stepgen.Stepgen is
             Finished_Block (Planner.Flush_Extra_Data (PP_Execution_Block), First_Accel_Distance, Hit_During_Accel);
          end;
       end loop;
-   exception
-      when E : others =>
-         Ada.Text_IO.Put_Line ("Exception in Stepgen preprocessor:");
-         Ada.Text_IO.Put_Line (Ada.Exceptions.Exception_Information (E));
    end Preprocessor;
 
    Empty_Queue : exception;
@@ -329,10 +324,6 @@ package body Stepgen.Stepgen is
 
          Command_Start_Time := @ + Command_Interpolation_Time;
       end loop;
-   exception
-      when E : others =>
-         Ada.Text_IO.Put_Line ("Exception in Stepgen runner:");
-         Ada.Text_IO.Put_Line (Ada.Exceptions.Exception_Information (E));
    end Runner;
 
    procedure Wait_Until_Idle is
